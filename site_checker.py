@@ -60,7 +60,7 @@ REQUEST_TIMEOUT = 10.0      # seconds to wait for a page / image
 SLOW_SECONDS = 3.0          # flag pages that load slower than this
 MAX_IMAGES_PER_PAGE = 10    # new image requests per page (0 = skip image checks)
 SCREENSHOT_DIR = "screenshots"
-SCREENSHOT_TIME_LIMIT = 60.0  # seconds a page may keep loading files before the screenshot is taken
+SCREENSHOT_TIME_LIMIT = 20.0  # seconds a page may keep loading files before the screenshot is taken
 MIN_INTERVAL = 1.0          # seconds between request starts (hard floor)
 SAFETY_MARGIN = 0.05        # extra spacing so timing jitter never lets two requests land inside 1 second
 MAX_REDIRECTS = 10
@@ -409,6 +409,10 @@ VIEWPORT = {"width": 390, "height": 844}           # phone size
 CACHEABLE_TYPES = {"stylesheet", "script", "font", "image", "media"}
 MAX_CACHED_BYTES = 5 * 1024 * 1024
 NETWORK_IDLE_MS = 10_000                            # how long to wait for lazy content after "load"
+# Cookie banner: the "No thanks" button is tapped before each screenshot (matched by its text, case-insensitive)
+COOKIE_BUTTON = r"text=/^\s*no,?\s*thanks[.!]?\s*$/i >> visible=true"
+COOKIE_WAIT_MS = 4000          # how long to wait for the banner to appear (until it has been dismissed once)
+COOKIE_WAIT_AFTER_MS = 1000    # shorter wait on later pages: the "No thanks" choice is usually remembered
 FETCH_TIMEOUT_MS = 30_000                           # max time for a single browser request
 SCREENSHOT_TIMEOUT_MS = 30_000                      # max time for the screenshot call itself
 _STRIP_HEADERS = {"content-encoding", "content-length", "transfer-encoding"}
@@ -434,6 +438,8 @@ class Screenshotter:
         self.network_requests = 0
         self.cache_hits = 0
         self.failures: List[str] = []
+        self.cookie_taps = 0        # pages where "No thanks" was tapped
+        self.cookie_missed = 0      # pages where no such button was found
         self._deadline: Optional[float] = None
         self._skipped = 0
 
@@ -506,6 +512,24 @@ class Screenshotter:
         self._used_names.add(candidate)
         return os.path.join(self.out_dir, candidate + ".png")
 
+    def _dismiss_cookie_banner(self, page) -> bool:
+        """Tap "No thanks" on the cookie banner (main page or an iframe). Returns True if it was tapped."""
+        wait_ms = COOKIE_WAIT_AFTER_MS if self.cookie_taps else COOKIE_WAIT_MS
+        give_up = time.monotonic() + wait_ms / 1000
+        while True:
+            for frame in page.frames:
+                button = frame.locator(COOKIE_BUTTON).first
+                if frame.locator(COOKIE_BUTTON).count() > 0:
+                    try:
+                        button.tap(timeout=3000)       # a real touch tap (the context has touch enabled)
+                    except Exception:
+                        button.click(timeout=3000)
+                    page.wait_for_timeout(700)         # let the banner slide away before the screenshot
+                    return True
+            if time.monotonic() >= give_up:
+                return False
+            page.wait_for_timeout(250)
+
     def capture(self, url: str) -> Tuple[str, str]:
         """Open the page in the phone viewport and save a PNG. Returns (path, note); note is a problem text.
 
@@ -526,6 +550,13 @@ class Screenshotter:
                     page.wait_for_load_state("networkidle", timeout=NETWORK_IDLE_MS)
                 except self._timeout_error:
                     pass
+            try:
+                if self._dismiss_cookie_banner(page):
+                    self.cookie_taps += 1
+                else:
+                    self.cookie_missed += 1
+            except Exception:
+                self.cookie_missed += 1                # never let the banner step block the screenshot
             try:
                 page.screenshot(path=path, full_page=self.full_page, timeout=SCREENSHOT_TIMEOUT_MS)
             except Exception:
@@ -885,6 +916,12 @@ def main() -> int:
               f"({shooter.network_requests} browser requests, {shooter.cache_hits} served from cache)")
         if shooter.failures:
             print(f"Screenshots: {len(shooter.failures)} FAILED, first error: {shooter.failures[0]}")
+        pages = shooter.cookie_taps + shooter.cookie_missed
+        if pages:
+            note = ""
+            if not shooter.cookie_taps:
+                note = " (no 'No thanks' button was found: the banner uses different wording, or none was shown)"
+            print(f"Cookie banner: tapped 'No thanks' on {shooter.cookie_taps} of {pages} screenshot page(s){note}")
     elif shots_off_reason:
         print(f"Screenshots: NONE TAKEN - {shots_off_reason}")
     print(f"CSV saved : {logger.path}")

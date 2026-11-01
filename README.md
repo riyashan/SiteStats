@@ -56,7 +56,7 @@ Everything else is a constant at the top of `site_checker.py`. Edit the file to 
 | `MAX_IMAGES_PER_PAGE` | New image requests per page (0 = skip image checks) | 10 |
 | `REQUEST_TIMEOUT` | Seconds to wait for a page or image | 10 |
 | `SCREENSHOT_DIR` | Screenshot folder | `screenshots` |
-| `SCREENSHOT_TIME_LIMIT` | Seconds a page may keep loading files before its screenshot | 60 |
+| `SCREENSHOT_TIME_LIMIT` | Seconds a page may keep loading files before its screenshot | 20 |
 
 ## CSV
 
@@ -109,7 +109,8 @@ Title, meta description and image checks run only on pages that return 200. Quic
 - Pages are opened in headless Chromium as a phone: 390x844 viewport, touch and mobile mode, scale 1, so each PNG is exactly 390x844.
 - Files are saved as `screenshots/<date>-<page>.png`, for example `screenshots/2026-10-31-home.png`. Running again the same day overwrites the same page's file.
 - Only pages that return 200 are screenshotted. The CSV has no screenshot column.
-- Each page has a time limit (`SCREENSHOT_TIME_LIMIT`, 60 s). When it runs out the browser skips the files it has not loaded yet, the screenshot is saved with what has loaded, and `problem` says how many files were skipped.
+- Before each screenshot the browser taps the cookie banner's **No thanks** button, so the banner does not cover the page. The button is found by its text (`No thanks` or `No, thanks`, any capitalisation), on the page or inside an iframe. It waits up to 4 seconds for the banner to appear; once "No thanks" has been tapped, later pages wait only 1 second because the choice is normally remembered. The end of the run prints `Cookie banner: tapped 'No thanks' on N of M screenshot page(s)`. If N is 0, the banner uses different wording or was not shown. The matching text is the `COOKIE_BUTTON` constant at the top of `site_checker.py`.
+- Each page has a time limit (`SCREENSHOT_TIME_LIMIT`, 20 s). When it runs out the browser skips the files it has not loaded yet, the screenshot is saved with what has loaded, and `problem` says how many files were skipped.
 - If Playwright or its browser is missing, the tool prints why, skips screenshots and carries on with the checks.
 
 **Screenshots not saved?**
@@ -119,6 +120,7 @@ Title, meta description and image checks run only on pages that return 200. Quic
 3. `Executable doesn't exist`: run `playwright install chromium` with the same Python you use for the script.
 4. Files go to the `screenshots` folder inside the folder you ran the script from.
 5. `--full` never takes screenshots.
+6. Banner still visible in a screenshot: check the `Cookie banner:` line. If it says 0 pages, open the banner button's text and change `COOKIE_BUTTON` to match it.
 
 ## Rate limiting
 
